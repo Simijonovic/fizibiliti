@@ -11,20 +11,17 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 
-  <!-- Plotly (biće cache-ovan za offline preko Service Worker-a) -->
   <script src="https://cdn.plot.ly/plotly-2.30.0.min.js"></script>
 
   <style>
     :root{
       --bg:#0b0c10; --panel:#12141a; --text:#e8e8ea; --muted:#a7abb7; --line:#262a36;
-      --accent:#7aa2ff; --danger:#ff7a7a;
       --tap:48px;
     }
     html,body{height:100%; margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; background:var(--bg); color:var(--text);}
     *{box-sizing:border-box;}
     .wrap{height:100%; display:flex; flex-direction:column; padding:14px; gap:12px; padding-bottom: calc(14px + env(safe-area-inset-bottom));}
 
-    /* iPad-first layout: big plot + slim right panel; input is compact at top */
     .inputBar{
       background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:12px;
       display:flex; flex-wrap:wrap; gap:10px; align-items:center;
@@ -72,8 +69,8 @@
       background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:12px; min-height:0;
     }
     .card h2{margin:0 0 10px; font-size:13px; letter-spacing:.2px; color:var(--muted); font-weight:700;}
-    .metricRow{display:flex; gap:10px; align-items:end;}
-    .metricRow > div{flex:1;}
+    .metricRow{display:flex; gap:10px; align-items:end; flex-wrap:wrap;}
+    .metricRow > div{flex:1; min-width:140px;}
     .hint{font-size:12px; color:var(--muted); margin-top:6px; line-height:1.35;}
 
     table{width:100%; border-collapse:collapse; font-size:14px;}
@@ -91,7 +88,6 @@
 <body>
 <div class="wrap">
 
-  <!-- UNOS: sve zajedno -->
   <div class="inputBar">
     <div class="name">
       <div class="tiny">Ideja (naziv)</div>
@@ -131,7 +127,6 @@
   </div>
 
   <div class="main">
-    <!-- BIG: 3D -->
     <div class="plotCard">
       <div class="plotTop">
         <div class="status">
@@ -146,11 +141,17 @@
       <div id="plot"></div>
     </div>
 
-    <!-- SIDE: metrika + tabela -->
     <div class="side">
       <div class="card">
-        <h2>Metrika i sortiranje</h2>
+        <h2>Metrika i prikaz</h2>
         <div class="metricRow">
+          <div>
+            <div class="tiny">Prikaz</div>
+            <select id="viewSelect">
+              <option value="3d" selected>3D</option>
+              <option value="2d">2D</option>
+            </select>
+          </div>
           <div>
             <div class="tiny">Metrika</div>
             <select id="metricSelect"></select>
@@ -169,7 +170,8 @@
           <button class="danger" id="resetBtn" style="border-color:#4a2226;background:#2a1416;">Reset</button>
         </div>
         <div class="hint">
-          Klik na red u tabeli učitava ideju u unos. Draft se autosave-uje (naziv + slajderi).
+          Skorovi su “više = bolje”: Jednostavnost, Zainteresovanost, Profitabilnost.
+          Klik na red učitava ideju u unos.
         </div>
       </div>
 
@@ -194,16 +196,13 @@
 </div>
 
 <script>
-  // ---------- PWA SW ----------
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('./sw.js');
   }
 
-  // ---------- Keys ----------
-  const KEY_IDEAS = "ipad_ideas_v2";
-  const KEY_DRAFT = "ipad_draft_v2";
+  const KEY_IDEAS = "ipad_ideas_v3";
+  const KEY_DRAFT = "ipad_draft_v3";
 
-  // ---------- DOM ----------
   const ideaName = document.getElementById('ideaName');
   const sSimp = document.getElementById('sSimp');
   const sInt  = document.getElementById('sInt');
@@ -217,6 +216,7 @@
   const importBtn = document.getElementById('importBtn');
   const resetBtn = document.getElementById('resetBtn');
 
+  const viewSelect = document.getElementById('viewSelect');
   const metricSelect = document.getElementById('metricSelect');
   const dirSelect = document.getElementById('dirSelect');
   const tbody = document.getElementById('tbody');
@@ -228,7 +228,6 @@
   const prevMin = document.getElementById('prevMin');
   const offlineState = document.getElementById('offlineState');
 
-  // ---------- Storage ----------
   function loadIdeas(){
     try { return JSON.parse(localStorage.getItem(KEY_IDEAS) || "[]"); } catch { return []; }
   }
@@ -236,27 +235,32 @@
     localStorage.setItem(KEY_IDEAS, JSON.stringify(arr));
   }
   function saveDraft(){
-    const d = { name: ideaName.value.trim(), simp:+sSimp.value, intr:+sInt.value, prof:+sPro.value, t:Date.now() };
+    // Draft čuva RAW slider pozicije (0..10) da se UI vrati identično.
+    const d = { name: ideaName.value.trim(), rawS:+sSimp.value, rawI:+sInt.value, rawP:+sPro.value, t:Date.now() };
     localStorage.setItem(KEY_DRAFT, JSON.stringify(d));
   }
   function loadDraft(){
     try { return JSON.parse(localStorage.getItem(KEY_DRAFT) || "null"); } catch { return null; }
   }
 
-  // ---------- Helpers ----------
   function uuid(){
     return "id_" + Math.random().toString(16).slice(2) + "_" + Date.now().toString(16);
   }
   function esc(s){
     return (s||"").replace(/[&<>"']/g, c=>({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
   }
+
+  // KLJUČ: invertovanje skale (više = bolje)
+  // RAW 0..10 (levo->desno) se mapira u SCORE 10..0
+  function scoreFromRaw(raw){ return 10 - raw; }
+  function rawFromScore(score){ return 10 - score; }
+
   function refreshVals(){
-    vSimp.textContent = sSimp.value;
-    vInt.textContent  = sInt.value;
-    vPro.textContent  = sPro.value;
+    vSimp.textContent = scoreFromRaw(+sSimp.value).toFixed(1).replace('.0','');
+    vInt.textContent  = scoreFromRaw(+sInt.value).toFixed(1).replace('.0','');
+    vPro.textContent  = scoreFromRaw(+sPro.value).toFixed(1).replace('.0','');
   }
 
-  // ---------- Metrics ----------
   function metrics(x,y,z){
     const sum = x+y+z;
     const avg = sum/3;
@@ -265,11 +269,8 @@
     const harm = (x>0 && y>0 && z>0) ? (3 / ((1/x)+(1/y)+(1/z))) : 0;
     const min = Math.min(x,y,z);
     const max = Math.max(x,y,z);
-
-    // Min-penalizovani: prosek - alpha*(max-min). Alpha je namerno “oštriji” jer imaš samo 3 ose.
     const alpha = 0.40;
     const minPen = avg - alpha*(max-min);
-
     return {sum, avg, product, geo, harm, min, minPen};
   }
 
@@ -287,12 +288,14 @@
     return (Math.round(v*100)/100).toString();
   }
 
-  // ---------- Core state ----------
-  let selectedId = null; // when clicking table row
+  let selectedId = null;
 
   function currentPreview(){
     const name = ideaName.value.trim() || "Preview";
-    const x = +sSimp.value, y = +sInt.value, z = +sPro.value;
+    // EFFECTIVE scores (0..10, više=bolje)
+    const x = scoreFromRaw(+sSimp.value);
+    const y = scoreFromRaw(+sInt.value);
+    const z = scoreFromRaw(+sPro.value);
     const m = metrics(x,y,z);
     return {name, x, y, z, m};
   }
@@ -302,9 +305,11 @@
     if (!name) { alert("Unesi naziv ideje."); return; }
 
     const ideas = loadIdeas();
-    const x = +sSimp.value, y = +sInt.value, z = +sPro.value;
+    // STORE as SCORE (više=bolje)
+    const x = scoreFromRaw(+sSimp.value);
+    const y = scoreFromRaw(+sInt.value);
+    const z = scoreFromRaw(+sPro.value);
 
-    // Update by selectedId if present; else by case-insensitive name match
     let idx = -1;
     if (selectedId) idx = ideas.findIndex(i=>i.id===selectedId);
     if (idx < 0) idx = ideas.findIndex(i=>i.name.toLowerCase()===name.toLowerCase());
@@ -321,7 +326,6 @@
     renderAll();
   }
 
-  // ---------- Table ----------
   function renderTable(){
     const ideas = loadIdeas();
     const key = metricSelect.value;
@@ -350,19 +354,21 @@
       tr.addEventListener("click", ()=>{
         selectedId = r.i.id;
         ideaName.value = r.i.name;
-        sSimp.value = r.i.simp;
-        sInt.value  = r.i.intr;
-        sPro.value  = r.i.prof;
+
+        // Convert SCORE back to RAW slider positions
+        sSimp.value = rawFromScore(r.i.simp);
+        sInt.value  = rawFromScore(r.i.intr);
+        sPro.value  = rawFromScore(r.i.prof);
+
         refreshVals();
         saveDraft();
-        renderAll(); // so plot highlights selection + preview updates
+        renderAll();
       });
       tbody.appendChild(tr);
     });
   }
 
-  // ---------- Plot ----------
-  function sphereSurface(center=5, radius=5, steps=28){
+  function sphereSurface(center=5, radius=5, steps=32){
     const u=[], v=[];
     for(let i=0;i<=steps;i++) u.push(i*Math.PI/steps);
     for(let j=0;j<=steps;j++) v.push(j*2*Math.PI/steps);
@@ -381,11 +387,10 @@
     return {X,Y,Z};
   }
 
-  function renderPlot(){
+  function renderPlot3D(){
     const ideas = loadIdeas();
     const prev = currentPreview();
 
-    // main points
     const xs = ideas.map(i=>i.simp);
     const ys = ideas.map(i=>i.intr);
     const zs = ideas.map(i=>i.prof);
@@ -400,38 +405,50 @@
         `MinPen: ${m.minPen.toFixed(2)} · Min: ${m.min.toFixed(2)}`;
     });
 
-    // selected highlight (if any)
-    let sel = ideas.find(i=>i.id===selectedId);
-    const selTrace = sel ? [{
-      type:"scatter3d", mode:"markers",
-      x:[sel.simp], y:[sel.intr], z:[sel.prof],
-      hoverinfo:"skip",
-      marker:{ size:10, symbol:"circle-open", line:{width:3} }
-    }] : [];
+    const sphere = sphereSurface(5,5,32);
 
-    // preview trace (live)
-    const prevTrace = {
-      type:"scatter3d", mode:"markers+text",
-      x:[prev.x], y:[prev.y], z:[prev.z],
-      text:[prev.name==="Preview" ? "" : prev.name],
-      textposition:"top center",
-      hoverinfo:"skip",
-      marker:{ size:9, symbol:"diamond", opacity:0.85 }
-    };
-
-    const sphere = sphereSurface(5,5,28);
     const traceSphere = {
       type:"surface",
       x:sphere.X, y:sphere.Y, z:sphere.Z,
-      opacity:0.10, showscale:false, hoverinfo:"skip"
+      opacity:0.16, showscale:false, hoverinfo:"skip"
     };
 
     const tracePts = {
       type:"scatter3d", mode:"markers",
       x:xs, y:ys, z:zs,
       text:hover, hoverinfo:"text",
-      marker:{ size:6 }
+      marker:{
+        size:4,
+        symbol:"circle-open",
+        color:"rgba(255,255,255,0)",
+        line:{color:"#ffffff", width:2}
+      }
     };
+
+    const prevTrace = {
+      type:"scatter3d", mode:"markers",
+      x:[prev.x], y:[prev.y], z:[prev.z],
+      hoverinfo:"skip",
+      marker:{
+        size:6,
+        symbol:"diamond-open",
+        color:"rgba(255,255,255,0)",
+        line:{color:"#ffffff", width:2}
+      }
+    };
+
+    let sel = ideas.find(i=>i.id===selectedId);
+    const selTrace = sel ? [{
+      type:"scatter3d", mode:"markers",
+      x:[sel.simp], y:[sel.intr], z:[sel.prof],
+      hoverinfo:"skip",
+      marker:{
+        size:8,
+        symbol:"circle-open",
+        color:"rgba(255,255,255,0)",
+        line:{color:"#ffffff", width:4}
+      }
+    }] : [];
 
     const layout = {
       margin:{l:0,r:0,t:0,b:0},
@@ -451,7 +468,97 @@
     Plotly.react("plot", [traceSphere, tracePts, prevTrace, ...selTrace], layout, {displayModeBar:false, responsive:true});
   }
 
-  // ---------- Preview header ----------
+  function renderPlot2D(){
+    const ideas = loadIdeas();
+    const prev = currentPreview();
+
+    // 2D: X=Jednostavnost, Y=Profitabilnost, size = Zainteresovanost
+    const xs = ideas.map(i=>i.simp);
+    const ys = ideas.map(i=>i.prof);
+    const sizes = ideas.map(i=> Math.max(6, 3 + i.intr)); // visible but modest
+    const hover = ideas.map(i=>{
+      const m = metrics(i.simp,i.intr,i.prof);
+      return `<b>${esc(i.name)}</b><br>` +
+        `Jednostavnost: ${i.simp}<br>` +
+        `Zainteresovanost: ${i.intr}<br>` +
+        `Profitabilnost: ${i.prof}<br>` +
+        `MinPen: ${m.minPen.toFixed(2)} · Min: ${m.min.toFixed(2)}`;
+    });
+
+    // Circle that matches full 0..10 range on both axes (center 5,5 radius 5)
+    const steps = 180;
+    const cx=[], cy=[];
+    for (let k=0;k<=steps;k++){
+      const t = (k/steps)*Math.PI*2;
+      cx.push(5 + 5*Math.cos(t));
+      cy.push(5 + 5*Math.sin(t));
+    }
+
+    const boundary = {
+      type:"scatter",
+      mode:"lines",
+      x:cx, y:cy,
+      hoverinfo:"skip",
+      line:{width:2}
+    };
+
+    const pts = {
+      type:"scatter",
+      mode:"markers",
+      x:xs, y:ys,
+      text:hover, hoverinfo:"text",
+      marker:{
+        size:sizes,
+        symbol:"circle-open",
+        color:"rgba(255,255,255,0)",
+        line:{color:"#ffffff", width:2}
+      }
+    };
+
+    const prevPt = {
+      type:"scatter",
+      mode:"markers",
+      x:[prev.x], y:[prev.z],
+      hoverinfo:"skip",
+      marker:{
+        size:10,
+        symbol:"diamond-open",
+        color:"rgba(255,255,255,0)",
+        line:{color:"#ffffff", width:2}
+      }
+    };
+
+    let sel = ideas.find(i=>i.id===selectedId);
+    const selPt = sel ? [{
+      type:"scatter",
+      mode:"markers",
+      x:[sel.simp], y:[sel.prof],
+      hoverinfo:"skip",
+      marker:{
+        size:14,
+        symbol:"circle-open",
+        color:"rgba(255,255,255,0)",
+        line:{color:"#ffffff", width:4}
+      }
+    }] : [];
+
+    const layout = {
+      margin:{l:10,r:10,t:10,b:30},
+      xaxis:{title:"Jednostavnost", range:[0,10], gridcolor:"#1f2330", zerolinecolor:"#1f2330"},
+      yaxis:{title:"Profitabilnost", range:[0,10], gridcolor:"#1f2330", zerolinecolor:"#1f2330"},
+      paper_bgcolor:"#0b0c10",
+      plot_bgcolor:"#0b0c10",
+      showlegend:false
+    };
+
+    Plotly.react("plot", [boundary, pts, prevPt, ...selPt], layout, {displayModeBar:false, responsive:true});
+  }
+
+  function renderPlot(){
+    if (viewSelect.value === "2d") renderPlot2D();
+    else renderPlot3D();
+  }
+
   function renderPreviewHeader(){
     const p = currentPreview();
     prevName.textContent = p.name;
@@ -461,10 +568,9 @@
     prevMin.textContent = p.m.min.toFixed(2);
   }
 
-  // ---------- Import/Export ----------
   function exportJSON(){
     const ideas = loadIdeas();
-    const payload = { version:2, exportedAt: Date.now(), ideas };
+    const payload = { version:3, exportedAt: Date.now(), ideas };
     const blob = new Blob([JSON.stringify(payload, null, 2)], {type:"application/json"});
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -487,19 +593,26 @@
         const incoming = obj.ideas || obj;
         if (!Array.isArray(incoming)) throw new Error("Neispravan format.");
 
-        // Merge by name (case-insensitive)
         const cur = loadIdeas();
         const map = new Map(cur.map(i=>[i.name.toLowerCase(), i]));
+
         incoming.forEach(i=>{
           if (!i.name) return;
           const k = i.name.toLowerCase();
+
+          // Accept both score-fields and older fields.
+          const simp = (i.simp ?? i.simple ?? 0);
+          const intr = (i.intr ?? i.interest ?? 0);
+          const prof = (i.prof ?? i.profit ?? 0);
+
           const normalized = {
             name: i.name,
-            simp: +i.simp ?? +i.simple ?? 0,
-            intr: +i.intr ?? +i.interest ?? 0,
-            prof: +i.prof ?? +i.profit ?? 0,
+            simp: +simp,
+            intr: +intr,
+            prof: +prof,
             updatedAt: Date.now()
           };
+
           if (map.has(k)){
             const old = map.get(k);
             map.set(k, {...old, ...normalized, id: old.id});
@@ -529,14 +642,12 @@
     renderAll();
   }
 
-  // ---------- Render all ----------
   function renderAll(){
     renderPreviewHeader();
     renderPlot();
     renderTable();
   }
 
-  // ---------- Offline indicator ----------
   function updateOfflineState(){
     const online = navigator.onLine;
     offlineState.textContent = online ? "Online (cache se puni)" : "Offline (PWA cache)";
@@ -544,36 +655,28 @@
   window.addEventListener("online", updateOfflineState);
   window.addEventListener("offline", updateOfflineState);
 
-  // ---------- Init ----------
   function init(){
-    // metric dropdown
     metricSelect.innerHTML = METRICS.map(m=>`<option value="${m.key}">${m.label}</option>`).join("");
     metricSelect.value = "minPen";
 
-    // restore draft
     const d = loadDraft();
     if (d){
       ideaName.value = d.name || "";
-      sSimp.value = (d.simp ?? 5);
-      sInt.value  = (d.intr ?? 5);
-      sPro.value  = (d.prof ?? 5);
+      sSimp.value = (d.rawS ?? 5);
+      sInt.value  = (d.rawI ?? 5);
+      sPro.value  = (d.rawP ?? 5);
     }
     refreshVals();
 
-    // events: iPad friendly
     const onInput = ()=>{
       refreshVals();
-      saveDraft();      // autosave draft
-      renderAll();      // live preview tačka + metrički header
+      saveDraft();
+      renderAll();
     };
     [ideaName, sSimp, sInt, sPro].forEach(el=> el.addEventListener("input", onInput));
 
-    saveBtn.addEventListener("click", ()=>{
-      upsert();
-      saveDraft();
-    });
+    saveBtn.addEventListener("click", ()=>{ upsert(); saveDraft(); });
 
-    // Enter on name -> Save/Update
     ideaName.addEventListener("keydown", (e)=>{
       if (e.key === "Enter"){
         e.preventDefault();
@@ -584,6 +687,7 @@
 
     metricSelect.addEventListener("change", renderTable);
     dirSelect.addEventListener("change", renderTable);
+    viewSelect.addEventListener("change", renderPlot);
 
     exportBtn.addEventListener("click", exportJSON);
     importBtn.addEventListener("click", importJSON);
@@ -593,7 +697,6 @@
     renderAll();
   }
 
-  // wait for Plotly
   if (window.Plotly) init();
   else window.addEventListener("load", init);
 </script>
