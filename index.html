@@ -1,0 +1,601 @@
+<!doctype html>
+<html lang="sr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <title>Ideje – 3 ose</title>
+
+  <link rel="manifest" href="manifest.webmanifest">
+  <meta name="theme-color" content="#0b0c10">
+  <link rel="apple-touch-icon" href="icon-192.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+
+  <!-- Plotly (biće cache-ovan za offline preko Service Worker-a) -->
+  <script src="https://cdn.plot.ly/plotly-2.30.0.min.js"></script>
+
+  <style>
+    :root{
+      --bg:#0b0c10; --panel:#12141a; --text:#e8e8ea; --muted:#a7abb7; --line:#262a36;
+      --accent:#7aa2ff; --danger:#ff7a7a;
+      --tap:48px;
+    }
+    html,body{height:100%; margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; background:var(--bg); color:var(--text);}
+    *{box-sizing:border-box;}
+    .wrap{height:100%; display:flex; flex-direction:column; padding:14px; gap:12px; padding-bottom: calc(14px + env(safe-area-inset-bottom));}
+
+    /* iPad-first layout: big plot + slim right panel; input is compact at top */
+    .inputBar{
+      background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:12px;
+      display:flex; flex-wrap:wrap; gap:10px; align-items:center;
+    }
+    .inputBar .name{flex: 2 1 260px;}
+    .inputBar .name input{height:var(--tap); font-size:16px;}
+    .inputBar .save{flex: 0 0 160px;}
+    .inputBar button{height:var(--tap); font-size:16px; border-radius:12px; border:1px solid var(--line); background:#141b2f; color:var(--text); width:100%;}
+    .inputBar button.primary{background:#1a2a55; border-color:#2a3d79;}
+    .inputBar button.danger{background:#2a1416; border-color:#4a2226;}
+
+    .sliders{flex: 4 1 520px; display:flex; gap:10px; flex-wrap:wrap;}
+    .sBlock{
+      flex: 1 1 180px;
+      background:#0f1117; border:1px solid var(--line); border-radius:14px; padding:10px;
+      min-width: 180px;
+    }
+    .sHead{display:flex; justify-content:space-between; gap:8px; align-items:center; margin-bottom:8px; font-size:13px; color:var(--muted);}
+    .sVal{font-size:15px; color:var(--text); font-weight:700;}
+    input[type="range"]{width:100%; height: var(--tap);}
+
+    input, select{
+      width:100%; border-radius:12px; border:1px solid var(--line); background:#0f1117; color:var(--text);
+      padding:10px 12px; font-size:14px;
+    }
+    .main{
+      flex:1; display:flex; gap:12px; min-height:0;
+    }
+    .plotCard{
+      flex: 3 1 700px; background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:10px;
+      display:flex; flex-direction:column; min-height:0;
+    }
+    .plotTop{
+      display:flex; justify-content:space-between; align-items:center; gap:10px; padding:6px 6px 10px 6px;
+      flex-wrap:wrap;
+    }
+    .plotTop .status{font-size:12px; color:var(--muted);}
+    .plotTop .status b{color:var(--text);}
+    #plot{flex:1; min-height:360px;}
+
+    .side{
+      flex: 1 1 420px; display:flex; flex-direction:column; gap:12px; min-width:320px; min-height:0;
+    }
+    .card{
+      background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:12px; min-height:0;
+    }
+    .card h2{margin:0 0 10px; font-size:13px; letter-spacing:.2px; color:var(--muted); font-weight:700;}
+    .metricRow{display:flex; gap:10px; align-items:end;}
+    .metricRow > div{flex:1;}
+    .hint{font-size:12px; color:var(--muted); margin-top:6px; line-height:1.35;}
+
+    table{width:100%; border-collapse:collapse; font-size:14px;}
+    th,td{border-bottom:1px solid var(--line); padding:12px 8px; text-align:left; vertical-align:top;}
+    th{font-size:12px; color:var(--muted); font-weight:700;}
+    tr{cursor:pointer;}
+    tr:hover{background:#0f1320;}
+    .tableWrap{overflow:auto; max-height: calc(100% - 48px); border-radius:12px;}
+    .tiny{font-size:12px; color:var(--muted);}
+
+    .btnRow{display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;}
+    .btnRow button{height:var(--tap); border-radius:12px; border:1px solid var(--line); background:#12182a; color:var(--text); font-size:15px; flex:1 1 160px;}
+  </style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- UNOS: sve zajedno -->
+  <div class="inputBar">
+    <div class="name">
+      <div class="tiny">Ideja (naziv)</div>
+      <input id="ideaName" placeholder="npr. Terapijski studio + sauna">
+    </div>
+
+    <div class="sliders">
+      <div class="sBlock">
+        <div class="sHead">
+          <div>Jednostavno — Komplikovano</div>
+          <div class="sVal" id="vSimp">5</div>
+        </div>
+        <input id="sSimp" type="range" min="0" max="10" step="0.5" value="5">
+      </div>
+
+      <div class="sBlock">
+        <div class="sHead">
+          <div>Zainteresovanost — Nezainteresovanost</div>
+          <div class="sVal" id="vInt">5</div>
+        </div>
+        <input id="sInt" type="range" min="0" max="10" step="0.5" value="5">
+      </div>
+
+      <div class="sBlock">
+        <div class="sHead">
+          <div>Profitabilnost — Neprofitabilnost</div>
+          <div class="sVal" id="vPro">5</div>
+        </div>
+        <input id="sPro" type="range" min="0" max="10" step="0.5" value="5">
+      </div>
+    </div>
+
+    <div class="save">
+      <div class="tiny">&nbsp;</div>
+      <button class="primary" id="saveBtn">Save / Update</button>
+    </div>
+  </div>
+
+  <div class="main">
+    <!-- BIG: 3D -->
+    <div class="plotCard">
+      <div class="plotTop">
+        <div class="status">
+          Preview: <b id="prevName">—</b>
+          · GeoMean <b id="prevGeo">0</b>
+          · Harm <b id="prevHarm">0</b>
+          · MinPen <b id="prevMinPen">0</b>
+          · Min <b id="prevMin">0</b>
+        </div>
+        <div class="tiny" id="offlineState">—</div>
+      </div>
+      <div id="plot"></div>
+    </div>
+
+    <!-- SIDE: metrika + tabela -->
+    <div class="side">
+      <div class="card">
+        <h2>Metrika i sortiranje</h2>
+        <div class="metricRow">
+          <div>
+            <div class="tiny">Metrika</div>
+            <select id="metricSelect"></select>
+          </div>
+          <div>
+            <div class="tiny">Smer</div>
+            <select id="dirSelect">
+              <option value="desc" selected>Najveće prvo</option>
+              <option value="asc">Najmanje prvo</option>
+            </select>
+          </div>
+        </div>
+        <div class="btnRow">
+          <button id="exportBtn">Export JSON</button>
+          <button id="importBtn">Import JSON</button>
+          <button class="danger" id="resetBtn" style="border-color:#4a2226;background:#2a1416;">Reset</button>
+        </div>
+        <div class="hint">
+          Klik na red u tabeli učitava ideju u unos. Draft se autosave-uje (naziv + slajderi).
+        </div>
+      </div>
+
+      <div class="card" style="flex:1; display:flex; flex-direction:column; min-height:0;">
+        <h2>Rang lista</h2>
+        <div class="tableWrap">
+          <table>
+            <thead>
+              <tr>
+                <th style="width:70px;">Rang</th>
+                <th>Naziv</th>
+                <th style="width:120px;">Skor</th>
+              </tr>
+            </thead>
+            <tbody id="tbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+  // ---------- PWA SW ----------
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('./sw.js');
+  }
+
+  // ---------- Keys ----------
+  const KEY_IDEAS = "ipad_ideas_v2";
+  const KEY_DRAFT = "ipad_draft_v2";
+
+  // ---------- DOM ----------
+  const ideaName = document.getElementById('ideaName');
+  const sSimp = document.getElementById('sSimp');
+  const sInt  = document.getElementById('sInt');
+  const sPro  = document.getElementById('sPro');
+  const vSimp = document.getElementById('vSimp');
+  const vInt  = document.getElementById('vInt');
+  const vPro  = document.getElementById('vPro');
+
+  const saveBtn = document.getElementById('saveBtn');
+  const exportBtn = document.getElementById('exportBtn');
+  const importBtn = document.getElementById('importBtn');
+  const resetBtn = document.getElementById('resetBtn');
+
+  const metricSelect = document.getElementById('metricSelect');
+  const dirSelect = document.getElementById('dirSelect');
+  const tbody = document.getElementById('tbody');
+
+  const prevName = document.getElementById('prevName');
+  const prevGeo = document.getElementById('prevGeo');
+  const prevHarm = document.getElementById('prevHarm');
+  const prevMinPen = document.getElementById('prevMinPen');
+  const prevMin = document.getElementById('prevMin');
+  const offlineState = document.getElementById('offlineState');
+
+  // ---------- Storage ----------
+  function loadIdeas(){
+    try { return JSON.parse(localStorage.getItem(KEY_IDEAS) || "[]"); } catch { return []; }
+  }
+  function saveIdeas(arr){
+    localStorage.setItem(KEY_IDEAS, JSON.stringify(arr));
+  }
+  function saveDraft(){
+    const d = { name: ideaName.value.trim(), simp:+sSimp.value, intr:+sInt.value, prof:+sPro.value, t:Date.now() };
+    localStorage.setItem(KEY_DRAFT, JSON.stringify(d));
+  }
+  function loadDraft(){
+    try { return JSON.parse(localStorage.getItem(KEY_DRAFT) || "null"); } catch { return null; }
+  }
+
+  // ---------- Helpers ----------
+  function uuid(){
+    return "id_" + Math.random().toString(16).slice(2) + "_" + Date.now().toString(16);
+  }
+  function esc(s){
+    return (s||"").replace(/[&<>"']/g, c=>({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
+  }
+  function refreshVals(){
+    vSimp.textContent = sSimp.value;
+    vInt.textContent  = sInt.value;
+    vPro.textContent  = sPro.value;
+  }
+
+  // ---------- Metrics ----------
+  function metrics(x,y,z){
+    const sum = x+y+z;
+    const avg = sum/3;
+    const product = x*y*z;
+    const geo = (x>0 && y>0 && z>0) ? Math.pow(product, 1/3) : 0;
+    const harm = (x>0 && y>0 && z>0) ? (3 / ((1/x)+(1/y)+(1/z))) : 0;
+    const min = Math.min(x,y,z);
+    const max = Math.max(x,y,z);
+
+    // Min-penalizovani: prosek - alpha*(max-min). Alpha je namerno “oštriji” jer imaš samo 3 ose.
+    const alpha = 0.40;
+    const minPen = avg - alpha*(max-min);
+
+    return {sum, avg, product, geo, harm, min, minPen};
+  }
+
+  const METRICS = [
+    {key:"sum", label:"Zbir"},
+    {key:"avg", label:"Prosek"},
+    {key:"product", label:"Proizvod"},
+    {key:"geo", label:"Geometrijska sredina"},
+    {key:"harm", label:"Harmonička sredina"},
+    {key:"minPen", label:"Min-penalizovani skor"},
+  ];
+
+  function fmt(key, v){
+    if (key === "product") return String(Math.round(v));
+    return (Math.round(v*100)/100).toString();
+  }
+
+  // ---------- Core state ----------
+  let selectedId = null; // when clicking table row
+
+  function currentPreview(){
+    const name = ideaName.value.trim() || "Preview";
+    const x = +sSimp.value, y = +sInt.value, z = +sPro.value;
+    const m = metrics(x,y,z);
+    return {name, x, y, z, m};
+  }
+
+  function upsert(){
+    const name = ideaName.value.trim();
+    if (!name) { alert("Unesi naziv ideje."); return; }
+
+    const ideas = loadIdeas();
+    const x = +sSimp.value, y = +sInt.value, z = +sPro.value;
+
+    // Update by selectedId if present; else by case-insensitive name match
+    let idx = -1;
+    if (selectedId) idx = ideas.findIndex(i=>i.id===selectedId);
+    if (idx < 0) idx = ideas.findIndex(i=>i.name.toLowerCase()===name.toLowerCase());
+
+    if (idx >= 0){
+      ideas[idx] = {...ideas[idx], name, simp:x, intr:y, prof:z, updatedAt:Date.now()};
+      selectedId = ideas[idx].id;
+    } else {
+      const it = {id:uuid(), name, simp:x, intr:y, prof:z, createdAt:Date.now(), updatedAt:Date.now()};
+      ideas.push(it);
+      selectedId = it.id;
+    }
+    saveIdeas(ideas);
+    renderAll();
+  }
+
+  // ---------- Table ----------
+  function renderTable(){
+    const ideas = loadIdeas();
+    const key = metricSelect.value;
+    const dir = dirSelect.value;
+
+    const rows = ideas.map(i=>{
+      const m = metrics(i.simp, i.intr, i.prof);
+      return { i, score: m[key] };
+    });
+
+    rows.sort((a,b)=>{
+      const d = (dir==="desc") ? -1 : 1;
+      if (a.score < b.score) return -1*d;
+      if (a.score > b.score) return  1*d;
+      return a.i.name.localeCompare(b.i.name);
+    });
+
+    tbody.innerHTML = "";
+    rows.forEach((r, idx)=>{
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td>${idx+1}</td>
+        <td style="font-weight:700;">${esc(r.i.name)}</td>
+        <td style="font-variant-numeric: tabular-nums;">${fmt(key, r.score)}</td>
+      `;
+      tr.addEventListener("click", ()=>{
+        selectedId = r.i.id;
+        ideaName.value = r.i.name;
+        sSimp.value = r.i.simp;
+        sInt.value  = r.i.intr;
+        sPro.value  = r.i.prof;
+        refreshVals();
+        saveDraft();
+        renderAll(); // so plot highlights selection + preview updates
+      });
+      tbody.appendChild(tr);
+    });
+  }
+
+  // ---------- Plot ----------
+  function sphereSurface(center=5, radius=5, steps=28){
+    const u=[], v=[];
+    for(let i=0;i<=steps;i++) u.push(i*Math.PI/steps);
+    for(let j=0;j<=steps;j++) v.push(j*2*Math.PI/steps);
+
+    const X=[], Y=[], Z=[];
+    for(let i=0;i<u.length;i++){
+      const rx=[], ry=[], rz=[];
+      for(let j=0;j<v.length;j++){
+        const x = center + radius*Math.sin(u[i])*Math.cos(v[j]);
+        const y = center + radius*Math.sin(u[i])*Math.sin(v[j]);
+        const z = center + radius*Math.cos(u[i]);
+        rx.push(x); ry.push(y); rz.push(z);
+      }
+      X.push(rx); Y.push(ry); Z.push(rz);
+    }
+    return {X,Y,Z};
+  }
+
+  function renderPlot(){
+    const ideas = loadIdeas();
+    const prev = currentPreview();
+
+    // main points
+    const xs = ideas.map(i=>i.simp);
+    const ys = ideas.map(i=>i.intr);
+    const zs = ideas.map(i=>i.prof);
+
+    const hover = ideas.map(i=>{
+      const m = metrics(i.simp,i.intr,i.prof);
+      return `<b>${esc(i.name)}</b><br>` +
+        `Jednostavnost: ${i.simp}<br>` +
+        `Zainteresovanost: ${i.intr}<br>` +
+        `Profitabilnost: ${i.prof}<br>` +
+        `GeoMean: ${m.geo.toFixed(2)} · Harm: ${m.harm.toFixed(2)}<br>` +
+        `MinPen: ${m.minPen.toFixed(2)} · Min: ${m.min.toFixed(2)}`;
+    });
+
+    // selected highlight (if any)
+    let sel = ideas.find(i=>i.id===selectedId);
+    const selTrace = sel ? [{
+      type:"scatter3d", mode:"markers",
+      x:[sel.simp], y:[sel.intr], z:[sel.prof],
+      hoverinfo:"skip",
+      marker:{ size:10, symbol:"circle-open", line:{width:3} }
+    }] : [];
+
+    // preview trace (live)
+    const prevTrace = {
+      type:"scatter3d", mode:"markers+text",
+      x:[prev.x], y:[prev.y], z:[prev.z],
+      text:[prev.name==="Preview" ? "" : prev.name],
+      textposition:"top center",
+      hoverinfo:"skip",
+      marker:{ size:9, symbol:"diamond", opacity:0.85 }
+    };
+
+    const sphere = sphereSurface(5,5,28);
+    const traceSphere = {
+      type:"surface",
+      x:sphere.X, y:sphere.Y, z:sphere.Z,
+      opacity:0.10, showscale:false, hoverinfo:"skip"
+    };
+
+    const tracePts = {
+      type:"scatter3d", mode:"markers",
+      x:xs, y:ys, z:zs,
+      text:hover, hoverinfo:"text",
+      marker:{ size:6 }
+    };
+
+    const layout = {
+      margin:{l:0,r:0,t:0,b:0},
+      scene:{
+        xaxis:{title:"Jednostavnost", range:[0,10], gridcolor:"#1f2330", zerolinecolor:"#1f2330"},
+        yaxis:{title:"Zainteresovanost", range:[0,10], gridcolor:"#1f2330", zerolinecolor:"#1f2330"},
+        zaxis:{title:"Profitabilnost", range:[0,10], gridcolor:"#1f2330", zerolinecolor:"#1f2330"},
+        bgcolor:"#0b0c10",
+        aspectmode:"cube",
+        camera:{eye:{x:1.55,y:1.55,z:1.15}}
+      },
+      paper_bgcolor:"#0b0c10",
+      plot_bgcolor:"#0b0c10",
+      showlegend:false
+    };
+
+    Plotly.react("plot", [traceSphere, tracePts, prevTrace, ...selTrace], layout, {displayModeBar:false, responsive:true});
+  }
+
+  // ---------- Preview header ----------
+  function renderPreviewHeader(){
+    const p = currentPreview();
+    prevName.textContent = p.name;
+    prevGeo.textContent = p.m.geo.toFixed(2);
+    prevHarm.textContent = p.m.harm.toFixed(2);
+    prevMinPen.textContent = p.m.minPen.toFixed(2);
+    prevMin.textContent = p.m.min.toFixed(2);
+  }
+
+  // ---------- Import/Export ----------
+  function exportJSON(){
+    const ideas = loadIdeas();
+    const payload = { version:2, exportedAt: Date.now(), ideas };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], {type:"application/json"});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "ideje_export.json";
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function importJSON(){
+    const inp = document.createElement("input");
+    inp.type = "file";
+    inp.accept = "application/json";
+    inp.onchange = async ()=>{
+      const file = inp.files[0];
+      if (!file) return;
+      const text = await file.text();
+      try{
+        const obj = JSON.parse(text);
+        const incoming = obj.ideas || obj;
+        if (!Array.isArray(incoming)) throw new Error("Neispravan format.");
+
+        // Merge by name (case-insensitive)
+        const cur = loadIdeas();
+        const map = new Map(cur.map(i=>[i.name.toLowerCase(), i]));
+        incoming.forEach(i=>{
+          if (!i.name) return;
+          const k = i.name.toLowerCase();
+          const normalized = {
+            name: i.name,
+            simp: +i.simp ?? +i.simple ?? 0,
+            intr: +i.intr ?? +i.interest ?? 0,
+            prof: +i.prof ?? +i.profit ?? 0,
+            updatedAt: Date.now()
+          };
+          if (map.has(k)){
+            const old = map.get(k);
+            map.set(k, {...old, ...normalized, id: old.id});
+          } else {
+            map.set(k, {id: uuid(), ...normalized, createdAt: Date.now()});
+          }
+        });
+
+        saveIdeas(Array.from(map.values()));
+        renderAll();
+        alert("Import završen.");
+      } catch(e){
+        alert("Ne mogu da uvezem: " + e.message);
+      }
+    };
+    inp.click();
+  }
+
+  function resetAll(){
+    if (!confirm("Resetovati sve?")) return;
+    localStorage.removeItem(KEY_IDEAS);
+    localStorage.removeItem(KEY_DRAFT);
+    selectedId = null;
+    ideaName.value = "";
+    sSimp.value = 5; sInt.value = 5; sPro.value = 5;
+    refreshVals();
+    renderAll();
+  }
+
+  // ---------- Render all ----------
+  function renderAll(){
+    renderPreviewHeader();
+    renderPlot();
+    renderTable();
+  }
+
+  // ---------- Offline indicator ----------
+  function updateOfflineState(){
+    const online = navigator.onLine;
+    offlineState.textContent = online ? "Online (cache se puni)" : "Offline (PWA cache)";
+  }
+  window.addEventListener("online", updateOfflineState);
+  window.addEventListener("offline", updateOfflineState);
+
+  // ---------- Init ----------
+  function init(){
+    // metric dropdown
+    metricSelect.innerHTML = METRICS.map(m=>`<option value="${m.key}">${m.label}</option>`).join("");
+    metricSelect.value = "minPen";
+
+    // restore draft
+    const d = loadDraft();
+    if (d){
+      ideaName.value = d.name || "";
+      sSimp.value = (d.simp ?? 5);
+      sInt.value  = (d.intr ?? 5);
+      sPro.value  = (d.prof ?? 5);
+    }
+    refreshVals();
+
+    // events: iPad friendly
+    const onInput = ()=>{
+      refreshVals();
+      saveDraft();      // autosave draft
+      renderAll();      // live preview tačka + metrički header
+    };
+    [ideaName, sSimp, sInt, sPro].forEach(el=> el.addEventListener("input", onInput));
+
+    saveBtn.addEventListener("click", ()=>{
+      upsert();
+      saveDraft();
+    });
+
+    // Enter on name -> Save/Update
+    ideaName.addEventListener("keydown", (e)=>{
+      if (e.key === "Enter"){
+        e.preventDefault();
+        upsert();
+        saveDraft();
+      }
+    });
+
+    metricSelect.addEventListener("change", renderTable);
+    dirSelect.addEventListener("change", renderTable);
+
+    exportBtn.addEventListener("click", exportJSON);
+    importBtn.addEventListener("click", importJSON);
+    resetBtn.addEventListener("click", resetAll);
+
+    updateOfflineState();
+    renderAll();
+  }
+
+  // wait for Plotly
+  if (window.Plotly) init();
+  else window.addEventListener("load", init);
+</script>
+</body>
+</html>
